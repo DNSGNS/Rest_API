@@ -1,0 +1,37 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  DOTNET_CLI_HOME: "$CI_PROJECT_DIR"
+  DOTNET_NOLOGO: true
+  DOTNET_ROOT: "/usr/share/dotnet" 
+
+
+build:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - echo ""
+    - dotnet restore
+    - dotnet build --configuration Release
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 hour
+
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - echo ""
+    - dotnet test
+
+
+deploy:
+  stage: deploy
+  script:
+    - echo ""
+  only:
+    - main
