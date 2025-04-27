@@ -4,34 +4,68 @@ stages:
   - deploy
 
 variables:
-  DOTNET_CLI_HOME: "$CI_PROJECT_DIR"
-  DOTNET_NOLOGO: true
-  DOTNET_ROOT: "/usr/share/dotnet" 
+  SOLUTION_FILE: "test_API.sln"
+  API_PROJECT: "test_API/test_API.csproj"
+  TEST_PROJECT: "Test/Test.csproj"
+  PUBLISH_OUTPUT_DIR: "publish-output"
+  ASPNETCORE_ENVIRONMENT: "Production"
+  ASPNETCORE_URLS: "http://*:5245"
 
+  # Твои переменные для базы данных:
+  POSTGRES_DB: "base"
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "12309"
+  CONNECTION_STRING: "Host=postgres;Database=base;Username=postgres;Password=12309"
+
+before_script:
+  - export PATH="$PATH:$HOME/.dotnet/tools"
 
 build:
   stage: build
   image: mcr.microsoft.com/dotnet/sdk:8.0
   script:
-    - echo ""
-    - dotnet restore
-    - dotnet build --configuration Release
+    - dotnet restore $SOLUTION_FILE
+    - dotnet build $SOLUTION_FILE --configuration Release --no-restore
+    - dotnet publish $API_PROJECT --configuration Release --no-build --output $PUBLISH_OUTPUT_DIR
+
+    - echo "Размер артефактов перед загрузкой:"
+    - du -sh $PUBLISH_OUTPUT_DIR/ || echo "Артефакты не найдены"
+    - du -sh Test/bin/Release/net8.0/ || echo "Тестовые бинарники не найдены"
   artifacts:
     paths:
-      - bin/
-    expire_in: 1 hour
+      - $PUBLISH_OUTPUT_DIR/
+      - Test/bin/Release/net8.0/
+    expire_in: 1h
+    when: always
 
 test:
   stage: test
   image: mcr.microsoft.com/dotnet/sdk:8.0
+  dependencies:
+    - build
   script:
-    - echo ""
-    - dotnet test
-
+    - dotnet tool install -g trx2junit
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    - dotnet test $TEST_PROJECT --configuration Release --no-build
 
 deploy:
   stage: deploy
+  image: mcr.microsoft.com/dotnet/aspnet:8.0
+  services:
+    - name: postgres:latest
+      alias: postgres
+      variables:
+        POSTGRES_DB: $POSTGRES_DB
+        POSTGRES_USER: $POSTGRES_USER
+        POSTGRES_PASSWORD: $POSTGRES_PASSWORD
   script:
-    - echo ""
+    - dotnet ef database update --project $API_PROJECT --connection "$CONNECTION_STRING" || echo "Migrations not configured"
+
+    - cd $PUBLISH_OUTPUT_DIR
+    - dotnet test_API.dll --urls=$ASPNETCORE_URLS &
+    - sleep 15
+  environment:
+    name: production
+    url: http://192.168.56.1:5245/swagger
   only:
     - main
