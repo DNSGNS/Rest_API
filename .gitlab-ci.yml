@@ -11,33 +11,24 @@ variables:
   ASPNETCORE_ENVIRONMENT: "Production"
   ASPNETCORE_URLS: "http://*:5245"
 
-  # Твои переменные для базы данных:
+  # Переменные базы данных
   POSTGRES_DB: "base"
   POSTGRES_USER: "postgres"
   POSTGRES_PASSWORD: "12309"
-  CONNECTION_STRING: "Host=postgres;Database=base;Username=postgres;Password=12309"
+  CONNECTION_STRING: "Host=192.168.56.1;Port=5432;Database=base;Username=postgres;Password=12309"  
 
-before_script:
-  - export PATH="$PATH:$HOME/.dotnet/tools"
-
+# Этап 1: Сборка
 build:
   stage: build
   image: mcr.microsoft.com/dotnet/sdk:8.0
   script:
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    # Сборка и публикация
     - dotnet restore $SOLUTION_FILE
     - dotnet build $SOLUTION_FILE --configuration Release --no-restore
     - dotnet publish $API_PROJECT --configuration Release --no-build --output $PUBLISH_OUTPUT_DIR
 
-    - echo "Размер артефактов перед загрузкой:"
-    - du -sh $PUBLISH_OUTPUT_DIR/ || echo "Артефакты не найдены"
-    - du -sh Test/bin/Release/net8.0/ || echo "Тестовые бинарники не найдены"
-  artifacts:
-    paths:
-      - $PUBLISH_OUTPUT_DIR/
-      - Test/bin/Release/net8.0/
-    expire_in: 1h
-    when: always
-
+# Этап 2: Тестирование
 test:
   stage: test
   image: mcr.microsoft.com/dotnet/sdk:8.0
@@ -46,11 +37,13 @@ test:
   script:
     - dotnet tool install -g trx2junit
     - export PATH="$PATH:$HOME/.dotnet/tools"
+    # Запуск тестов
     - dotnet test $TEST_PROJECT --configuration Release --no-build
 
+# Этап 3: Деплой
 deploy:
   stage: deploy
-  image: mcr.microsoft.com/dotnet/aspnet:8.0
+  image: mcr.microsoft.com/dotnet/sdk:8.0  # Используем SDK для деплоя и миграций
   services:
     - name: postgres:latest
       alias: postgres
@@ -59,13 +52,14 @@ deploy:
         POSTGRES_USER: $POSTGRES_USER
         POSTGRES_PASSWORD: $POSTGRES_PASSWORD
   script:
-    - dotnet ef database update --project $API_PROJECT --connection "$CONNECTION_STRING" || echo "Migrations not configured"
+    # Установка необходимых инструментов
+    - apt-get update
+    - apt-get install -y postgresql-client  # Устанавливаем клиента PostgreSQL
+    - dotnet tool install --global dotnet-ef
+    - export PATH="$PATH:$HOME/.dotnet/tools"
 
-    - cd $PUBLISH_OUTPUT_DIR
-    - dotnet test_API.dll --urls=$ASPNETCORE_URLS &
-    - sleep 15
-  environment:
-    name: production
-    url: http://192.168.56.1:5245/swagger
-  only:
-    - main
+    # Ожидаем, пока база данных станет доступной
+    - timeout 30s bash -c 'until pg_isready -h 192.168.56.1 -U postgres; do sleep 1; done' 
+
+    # Миграция БД
+    - dotnet ef database update --project $API_PROJECT --connection "$CONNECTION_STRING" || echo "Migrations not configured"
